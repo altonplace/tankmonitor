@@ -1,9 +1,20 @@
+//modify tank monitor for use with newPing library
+
+
 // Demo using DHCP and DNS to perform a web client request.
 // 2011-06-08 <jc@wippler.nl> http://opensource.org/licenses/mit-license.php
 //Rewritten for HC-SR04 Sensor
 //change to mm
 
 #include <EtherCard.h>
+
+// New ping modification
+#include <NewPing.h>
+
+#define TRIGGER_PIN  11  // Arduino pin tied to trigger pin on the ultrasonic sensor.
+#define ECHO_PIN     11  // Arduino pin tied to echo pin on the ultrasonic sensor.
+#define MAX_DISTANCE 200 // Maximum distance we want to ping for (in centimeters). Maximum sensor distance is rated at 400-500cm.
+
 //---------------------------------------------------------------------
 // The PacketBuffer class is used to generate the json string that is send via ethernet - JeeLabs
 //---------------------------------------------------------------------
@@ -54,8 +65,6 @@ float percentFull;
 float height;
 float Area;
 long mm;
-const int trigPin = 2;
-const int echoPin = 4;
 int measureready = 0; //loop wait variable
 static byte mymac[] = { 
   0x74,0x69,0x69,0x2D,0x30,0x31 };  // ethernet interface mac address, must be unique on the LAN
@@ -91,6 +100,8 @@ static void my_callback (byte status, word off, word len) {
   Serial.println("...");
 }
 
+NewPing sonar(TRIGGER_PIN, ECHO_PIN, MAX_DISTANCE);
+
 long microsecondsToMillimeters(long microseconds)
 {
   // The speed of sound is 340 m/s or 29 microseconds per centimeter.
@@ -102,25 +113,7 @@ long microsecondsToMillimeters(long microseconds)
 // called when ping() runs  
 void measureDistance(){
 
-  // establish variables for duration of the ping, 
-  // and the distance result in inches and centimeters:
-  long duration, inches;
- 
-  // The sensor is triggered by a HIGH pulse of 10 or more microseconds.
-  // Give a short LOW pulse beforehand to ensure a clean HIGH pulse:
-  pinMode(trigPin, OUTPUT);
-  digitalWrite(trigPin, LOW);
-  delayMicroseconds(2);
-  digitalWrite(trigPin, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(trigPin, LOW);
- 
-  // Read the signal from the sensor: a HIGH pulse whose
-  // duration is the time (in microseconds) from the sending
-  // of the ping to the reception of its echo off of an object.
-  pinMode(echoPin, INPUT);
-  duration = pulseIn(echoPin, HIGH);
- 
+  unsigned int duration = sonar.ping();
   // convert the time into a distance
   mm = microsecondsToMillimeters(duration);
   Serial.print(mm);
@@ -184,7 +177,7 @@ void loop () {
 
 
   if (millis() > timer) {
-    timer = millis() + 5000;
+    timer = millis() + 1000;
     Serial.print("2 "); 
     Serial.println(str.buf); // print to serial json string
     Serial.println();
