@@ -1,49 +1,63 @@
-//modify tank monitor for use with newPing library
-
-
-// Demo using DHCP and DNS to perform a web client request.
-// 2011-06-08 <jc@wippler.nl> http://opensource.org/licenses/mit-license.php
+//modify tank monitor for use with newPing library and JEENODE
 //Rewritten for HC-SR04 Sensor
-//change to mm
 
-#include <EtherCard.h>
 
-// New ping modification
+//JeeNode Config
+  #include <JeeLib.h>
+  #include <PortsSHT11.h>
+  #include <avr/sleep.h>
+  #include <util/atomic.h>
+  
+  #define SERIAL  1   // set to 1 to also report readings on the serial port
+  #define DEBUG   1   // set to 1 to display each loop() run and PIR trigger
+  
+
+  #define LDR_PORT    4   // defined if LDR is connected to a port's AIO pin
+
+  
+  #define MEASURE_PERIOD  6 // how often to measure, in tenths of seconds
+  #define RETRY_PERIOD    10  // how soon to retry if ACK didn't come in
+  #define RETRY_LIMIT     5   // maximum number of times to retry
+  #define ACK_TIME        10  // number of milliseconds to wait for an ack
+  #define REPORT_EVERY    5   // report every N measurement cycles
+  #define SMOOTH          3   // smoothing factor used for running averages
+  
+  // set the sync mode to 2 if the fuses are still the Arduino default
+  // mode 3 (full powerdown) can only be used with 258 CK startup fuses
+  #define RADIO_SYNC_MODE 2
+  
+  // The scheduler makes it easy to perform various tasks at various times:
+  
+  enum { MEASURE, REPORT, TASK_END };
+  
+  static word schedbuf[TASK_END];
+  Scheduler scheduler (schedbuf, TASK_END);
+  
+  // Other variables used in various places in the code:
+  
+  static byte reportCount;    // count up until next report, i.e. packet send
+  static byte myNodeID;       // node ID used for this unit
+  
+  // This defines the structure of the packets which get sent out by wireless:
+  
+  struct {
+      int Oil :16;     // light sensor: 0..255
+      int HowFull :16; //Percent full
+      int Level :16; // inches oil
+      byte lobat :1;  // supply voltage dropped under 3.1V: 0..1
+      
+  } payload;
+
+
+
+
+// ping sensor configuration
 #include <NewPing.h>
+#define TRIGGER_PIN  6  // Arduino pin tied to trigger pin on the ultrasonic sensor.
+#define ECHO_PIN     7  // Arduino pin tied to echo pin on the ultrasonic sensor.
+#define MAX_DISTANCE 500 // Maximum distance we want to ping for (in centimeters). Maximum sensor distance is rated at 400-500cm.
 
-#define TRIGGER_PIN  11  // Arduino pin tied to trigger pin on the ultrasonic sensor.
-#define ECHO_PIN     11  // Arduino pin tied to echo pin on the ultrasonic sensor.
-#define MAX_DISTANCE 200 // Maximum distance we want to ping for (in centimeters). Maximum sensor distance is rated at 400-500cm.
-
-//---------------------------------------------------------------------
-// The PacketBuffer class is used to generate the json string that is send via ethernet - JeeLabs
-//---------------------------------------------------------------------
-class PacketBuffer : 
-public Print {
-public:
-  PacketBuffer () : 
-  fill (0) {
-  }
-  const char* buffer() { 
-    return buf; 
-  }
-  byte length() { 
-    return fill; 
-  }
-  void reset()
-  { 
-    memset(buf,NULL,sizeof(buf));
-    fill = 0; 
-  }
-  virtual size_t write (uint8_t ch)
-  { 
-    if (fill < sizeof buf) buf[fill++] = ch; 
-  }
-  byte fill;
-  char buf[150];
-private:
-};
-PacketBuffer str;
+NewPing sonar(TRIGGER_PIN, ECHO_PIN, MAX_DISTANCE);
 
 // Vertical Oil Tank Measurements in (mm)
 float tankHeight = 1117.6;
@@ -54,8 +68,8 @@ float Capacity = 275;  // Total tank Capacity in Gallons
 // End Tank Measurements
 
 //Measurement Variables
-float Volume;
-float conversion = 0.0000002641;
+float GallonsOil;
+
 float theta;
 float const Pi = 3.142;
 float LowerArea;
@@ -65,43 +79,9 @@ float percentFull;
 float height;
 float Area;
 long mm;
-int measureready = 0; //loop wait variable
-static byte mymac[] = { 
-  0x74,0x69,0x69,0x2D,0x30,0x31 };  // ethernet interface mac address, must be unique on the LAN
-byte Ethernet::buffer[700];
-static uint32_t timer;
 
-char website[] PROGMEM = "www.vis.openenergymonitor.org";
-
-void setup () {
-  Serial.begin(57600);
-  Serial.println("\n[webClient]");
-
-  if (ether.begin(sizeof Ethernet::buffer, mymac) == 0) 
-    Serial.println( "Failed to access Ethernet controller");
-  if (!ether.dhcpSetup())
-    Serial.println("DHCP failed");
-
-  ether.printIp("IP:  ", ether.myip);
-  ether.printIp("GW:  ", ether.gwip);  
-  ether.printIp("DNS: ", ether.dnsip);  
-
-  if (!ether.dnsLookup(website))
-    Serial.println("DNS failed");
-
-  ether.printIp("SRV: ", ether.hisip);
-}
-
-// called when the client request is complete
-static void my_callback (byte status, word off, word len) {
-  Serial.println(">>>");
-  Ethernet::buffer[off+300] = 0;
-  Serial.print((const char*) Ethernet::buffer + off);
-  Serial.println("...");
-}
-
-NewPing sonar(TRIGGER_PIN, ECHO_PIN, MAX_DISTANCE);
-
+//Conversions
+float conversion = 0.0000002641; //gallons per cc
 long microsecondsToMillimeters(long microseconds)
 {
   // The speed of sound is 340 m/s or 29 microseconds per centimeter.
@@ -110,30 +90,16 @@ long microsecondsToMillimeters(long microseconds)
   return microseconds / 2.9 / 2;
 }
 
+//Routines
+
 // called when ping() runs  
 void measureDistance(){
-
+  
   unsigned int duration = sonar.ping();
+  
   // convert the time into a distance
   mm = microsecondsToMillimeters(duration);
-  Serial.print(mm);
-  Serial.print("mm");
-} 
-
-// called when measurement is ready to be put into a string
-void createJSON(){
-
-  Serial.println();                                                  // print emontx data to serial
-  Serial.print("emonTx data rx");
-  str.print(",{OilLevel:");           
-  str.print(height);      // Add Height reading
-  str.print(",OilGallons:");          
-  str.print(Volume);           // Add Gallons reading
-  str.print(",OilTankLevel:");      
-  str.print(percentFull);    // Add Percent Full reading
-  ether.packetLoop(ether.packetReceive());                           
-  str.print("}\0");  //  End of json string
-}
+ } 
 
 //called when timer expires to get measurement
 void ping(){
@@ -159,32 +125,142 @@ void ping(){
     MiddleArea = (tankHeight - mm - radius) * tankWidth;
     Area = LowerArea + MiddleArea;
   }  
-  //************END TANK CONVERSION***********************
+  //************END TANK CONVERSION*********************** 
+ 
+  
 }
+
+// Conditional code, depending on which sensors are connected and how:
+
+
+#if LDR_PORT
+    Port ldr (LDR_PORT);
+#endif
+
+    
+// has to be defined because we're using the watchdog for low-power waiting
+ISR(WDT_vect) { Sleepy::watchdogEvent(); }
+
+// utility code to perform simple smoothing as a running average
+static int smoothedAverage(int prev, int next, byte firstTime =0) {
+    if (firstTime)
+        return next;
+    return ((SMOOTH - 1) * prev + next + SMOOTH / 2) / SMOOTH;
+}
+
+// wait a few milliseconds for proper ACK to me, return true if indeed received
+static byte waitForAck() {
+    MilliTimer ackTimer;
+    while (!ackTimer.poll(ACK_TIME)) {
+        if (rf12_recvDone() && rf12_crc == 0 &&
+                // see http://talk.jeelabs.net/topic/811#post-4712
+                rf12_hdr == (RF12_HDR_DST | RF12_HDR_CTL | myNodeID))
+            return 1;
+        set_sleep_mode(SLEEP_MODE_IDLE);
+        sleep_mode();
+    }
+    return 0;
+}
+
+// readout all the sensors and other values
+static void doMeasure() {
+    byte firstTime = 0; // special case to init running avg
+    ping(); //Get Measurement and calculate Area
+    GallonsOil = Area * conversion * tankDepth;  //convert cross-sectional area to liquid volume
+    percentFull = GallonsOil / Capacity;
+    height = (tankHeight - mm) / 25.4;  //convert mm distance to inches of Oil in the tank
+    
+    
+    payload.Oil = smoothedAverage(payload.Oil, GallonsOil, firstTime);
+    payload.HowFull = smoothedAverage(payload.HowFull, percentFull, firstTime);
+    payload.Level = smoothedAverage(payload.Level, height, firstTime);
+    payload.lobat = rf12_lowbat();
+ }
+
+static void serialFlush () {
+    #if ARDUINO >= 100
+        Serial.flush();
+    #endif  
+    delay(2); // make sure tx buf is empty before going back to sleep
+}
+
+// periodic report, i.e. send out a packet and optionally report on serial port
+static void doReport() {
+    rf12_sleep(RF12_WAKEUP);
+    rf12_sendNow(0, &payload, sizeof payload);
+    rf12_sendWait(RADIO_SYNC_MODE);
+    rf12_sleep(RF12_SLEEP);
+
+    #if SERIAL
+        Serial.print("Gallons Oil ");
+        Serial.print((int) payload.Oil);
+        Serial.print(',  ');
+        Serial.print("% Full ");
+        Serial.print((int) payload.HowFull);
+        Serial.print(',  ');
+        Serial.print("Inches of Oil ");
+        Serial.print((int) payload.Level);
+        Serial.print(',  ');
+        Serial.print("Battery Low? ");
+        Serial.print((int) payload.lobat);
+        Serial.println();
+        serialFlush();
+    #endif
+}
+
+void blink (byte pin) {
+    for (byte i = 0; i < 6; ++i) {
+        delay(100);
+        digitalWrite(pin, !digitalRead(pin));
+    }
+}
+
+void setup () {
+    #if SERIAL || DEBUG
+        Serial.begin(57600);
+        Serial.print("\n[roomNode.3]");
+        myNodeID = rf12_config();
+        serialFlush();
+    #else
+        myNodeID = rf12_config(0); // don't report info on the serial port
+    #endif
+    
+    rf12_sleep(RF12_SLEEP); // power down
+    
+   
+    reportCount = REPORT_EVERY;     // report right away for easy debugging
+    scheduler.timer(MEASURE, 0);    // start the measurement loop going
+  
+}
+
+
 
 void loop () {
-  ether.packetLoop(ether.packetReceive());
 
-  if (measureready == 0) {
-    ping(); //Get Measurement and calculate Area
-    Volume = Area * conversion * tankDepth;  //convert cross-sectional area to liquid volume
-    percentFull = Volume / Capacity;
-    height = (tankHeight - mm) / 25.4;  //convert mm distance to inches of Oil in the tank
-    createJSON();  //Put measurement in JSON String
-    measureready = 1;
+    #if DEBUG
+        Serial.print('.');
+        serialFlush();
+    #endif
+
+    
+    switch (scheduler.pollWaiting()) {
+
+        case MEASURE:
+            // reschedule these measurements periodically
+            scheduler.timer(MEASURE, MEASURE_PERIOD);
+            doMeasure();
+
+            // every so often, a report needs to be sent out
+            if (++reportCount >= REPORT_EVERY) {
+                reportCount = 0;
+                scheduler.timer(REPORT, 0);
+            }
+            break;
+            
+        case REPORT:
+            doReport();
+            break;
+    }
   }
 
-
-
-  if (millis() > timer) {
-    timer = millis() + 1000;
-    Serial.print("2 "); 
-    Serial.println(str.buf); // print to serial json string
-    Serial.println();
-    Serial.print("<<< REQ ");
-    ether.browseUrl(PSTR("/emoncms/api/post.json?apikey=d23033154844d5a8d8e1f95f3a4d0d92&json="),str.buf, website, my_callback );
-    str.reset();      // Reset json string  
-    measureready = 0;
-  }
-}
 
