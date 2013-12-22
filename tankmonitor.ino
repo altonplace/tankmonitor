@@ -1,54 +1,50 @@
 //modify tank monitor for use with newPing library and JEENODE
 //Rewritten for HC-SR04 Sensor
 
-
 //JeeNode Config
-  #include <JeeLib.h>
-  #include <PortsSHT11.h>
-  #include <avr/sleep.h>
-  #include <util/atomic.h>
-  
-  #define SERIAL  1   // set to 1 to also report readings on the serial port
-  #define DEBUG   1   // set to 1 to display each loop() run and PIR trigger
-  
+#include <JeeLib.h>
+#include <Ports.h>
+#include <avr/sleep.h>
+#include <util/atomic.h>
 
-  #define LDR_PORT    4   // defined if LDR is connected to a port's AIO pin
-
-  
-  #define MEASURE_PERIOD  6 // how often to measure, in tenths of seconds
-  #define RETRY_PERIOD    10  // how soon to retry if ACK didn't come in
-  #define RETRY_LIMIT     5   // maximum number of times to retry
-  #define ACK_TIME        10  // number of milliseconds to wait for an ack
-  #define REPORT_EVERY    5   // report every N measurement cycles
-  #define SMOOTH          3   // smoothing factor used for running averages
-  
-  // set the sync mode to 2 if the fuses are still the Arduino default
-  // mode 3 (full powerdown) can only be used with 258 CK startup fuses
-  #define RADIO_SYNC_MODE 2
-  
-  // The scheduler makes it easy to perform various tasks at various times:
-  
-  enum { MEASURE, REPORT, TASK_END };
-  
-  static word schedbuf[TASK_END];
-  Scheduler scheduler (schedbuf, TASK_END);
-  
-  // Other variables used in various places in the code:
-  
-  static byte reportCount;    // count up until next report, i.e. packet send
-  static byte myNodeID;       // node ID used for this unit
-  
-  // This defines the structure of the packets which get sent out by wireless:
-  
-  struct {
-      int Oil :16;     // light sensor: 0..255
-      int HowFull :16; //Percent full
-      int Level :16; // inches oil
-      byte lobat :1;  // supply voltage dropped under 3.1V: 0..1
-      
-  } payload;
+#define SERIAL  1   // set to 1 to also report readings on the serial port
+#define DEBUG   1   // set to 1 to display each loop() run and PIR trigger
 
 
+#define LDR_PORT    4   // defined if LDR is connected to a port's AIO pin
+
+
+#define MEASURE_PERIOD  30 // how often to measure, in tenths of seconds
+#define RETRY_PERIOD    10  // how soon to retry if ACK didn't come in
+#define RETRY_LIMIT     5   // maximum number of times to retry
+#define ACK_TIME        10  // number of milliseconds to wait for an ack
+#define REPORT_EVERY    5   // report every N measurement cycles
+#define SMOOTH          3   // smoothing factor used for running averages
+
+// set the sync mode to 2 if the fuses are still the Arduino default
+// mode 3 (full powerdown) can only be used with 258 CK startup fuses
+#define RADIO_SYNC_MODE 2
+
+// The scheduler makes it easy to perform various tasks at various times:
+
+enum { 
+  MEASURE, REPORT, TASK_END };
+
+static word schedbuf[TASK_END];
+Scheduler scheduler (schedbuf, TASK_END);
+
+// Other variables used in various places in the code:
+
+static byte reportCount;    // count up until next report, i.e. packet send
+static byte myNodeID;       // node ID used for this unit
+
+// This defines the structure of the packets which get sent out by wireless:
+
+typedef struct { 
+  int Oil, HowFull, Level, lobat; 
+} 
+PayloadTX;
+PayloadTX oiltx;
 
 
 // ping sensor configuration
@@ -94,18 +90,18 @@ long microsecondsToMillimeters(long microseconds)
 
 // called when ping() runs  
 void measureDistance(){
-  
+
   unsigned int duration = sonar.ping();
-  
+
   // convert the time into a distance
   mm = microsecondsToMillimeters(duration);
- } 
+} 
 
 //called when timer expires to get measurement
 void ping(){
 
   measureDistance();  // get the raw measurement data from HC-SR04 Sensor
-  
+
   //*******************TANK CONVERSION***************
   if (mm > tankHeight-radius){
     ; // Tank leavel is in the lower round section
@@ -126,141 +122,151 @@ void ping(){
     Area = LowerArea + MiddleArea;
   }  
   //************END TANK CONVERSION*********************** 
- 
-  
+
+
 }
 
 // Conditional code, depending on which sensors are connected and how:
 
 
 #if LDR_PORT
-    Port ldr (LDR_PORT);
+Port ldr (LDR_PORT);
 #endif
 
-    
+
 // has to be defined because we're using the watchdog for low-power waiting
-ISR(WDT_vect) { Sleepy::watchdogEvent(); }
+ISR(WDT_vect) { 
+  Sleepy::watchdogEvent(); 
+}
 
 // utility code to perform simple smoothing as a running average
 static int smoothedAverage(int prev, int next, byte firstTime =0) {
-    if (firstTime)
-        return next;
-    return ((SMOOTH - 1) * prev + next + SMOOTH / 2) / SMOOTH;
+  if (firstTime)
+    return next;
+  return ((SMOOTH - 1) * prev + next + SMOOTH / 2) / SMOOTH;
 }
 
 // wait a few milliseconds for proper ACK to me, return true if indeed received
 static byte waitForAck() {
-    MilliTimer ackTimer;
-    while (!ackTimer.poll(ACK_TIME)) {
-        if (rf12_recvDone() && rf12_crc == 0 &&
-                // see http://talk.jeelabs.net/topic/811#post-4712
-                rf12_hdr == (RF12_HDR_DST | RF12_HDR_CTL | myNodeID))
-            return 1;
-        set_sleep_mode(SLEEP_MODE_IDLE);
-        sleep_mode();
-    }
-    return 0;
+  MilliTimer ackTimer;
+  while (!ackTimer.poll(ACK_TIME)) {
+    if (rf12_recvDone() && rf12_crc == 0 &&
+      // see http://talk.jeelabs.net/topic/811#post-4712
+    rf12_hdr == (RF12_HDR_DST | RF12_HDR_CTL | myNodeID))
+      return 1;
+    set_sleep_mode(SLEEP_MODE_IDLE);
+    sleep_mode();
+  }
+  return 0;
 }
 
 // readout all the sensors and other values
 static void doMeasure() {
-    byte firstTime = 0; // special case to init running avg
-    ping(); //Get Measurement and calculate Area
-    GallonsOil = Area * conversion * tankDepth;  //convert cross-sectional area to liquid volume
-    percentFull = GallonsOil / Capacity;
-    height = (tankHeight - mm) / 25.4;  //convert mm distance to inches of Oil in the tank
-    
-    
-    payload.Oil = smoothedAverage(payload.Oil, GallonsOil, firstTime);
-    payload.HowFull = smoothedAverage(payload.HowFull, percentFull, firstTime);
-    payload.Level = smoothedAverage(payload.Level, height, firstTime);
-    payload.lobat = rf12_lowbat();
- }
+  byte firstTime = 0; // special case to init running avg
+  ping(); //Get Measurement and calculate Area
+  GallonsOil = Area * conversion * tankDepth;  //convert cross-sectional area to liquid volume
+  percentFull = GallonsOil / Capacity;
+  height = (tankHeight - mm) / 25.4;  //convert mm distance to inches of Oil in the tank
+
+
+  oiltx.Oil = smoothedAverage(oiltx.Oil, GallonsOil, firstTime);
+  oiltx.HowFull = smoothedAverage(oiltx.HowFull, percentFull, firstTime);
+  oiltx.Level = smoothedAverage(oiltx.Level, height, firstTime);
+  oiltx.lobat = rf12_lowbat();
+}
 
 static void serialFlush () {
-    #if ARDUINO >= 100
-        Serial.flush();
-    #endif  
-    delay(2); // make sure tx buf is empty before going back to sleep
+#if ARDUINO >= 100
+  Serial.flush();
+#endif  
+  delay(2); // make sure tx buf is empty before going back to sleep
 }
 
 // periodic report, i.e. send out a packet and optionally report on serial port
 static void doReport() {
-    rf12_sleep(RF12_WAKEUP);
-    rf12_sendNow(0, &payload, sizeof payload);
-    rf12_sendWait(RADIO_SYNC_MODE);
-    rf12_sleep(RF12_SLEEP);
+  rf12_sleep(RF12_WAKEUP);
+  rf12_sendNow(0, &oiltx, sizeof oiltx);
+  rf12_sendWait(RADIO_SYNC_MODE);
+  rf12_sleep(RF12_SLEEP);
 
-    #if SERIAL
-        Serial.print("Gallons Oil ");
-        Serial.print((int) payload.Oil);
-        Serial.print(',  ');
-        Serial.print("% Full ");
-        Serial.print((int) payload.HowFull);
-        Serial.print(',  ');
-        Serial.print("Inches of Oil ");
-        Serial.print((int) payload.Level);
-        Serial.print(',  ');
-        Serial.print("Battery Low? ");
-        Serial.print((int) payload.lobat);
-        Serial.println();
-        serialFlush();
-    #endif
+#if SERIAL
+  Serial.print("Gallons Oil ");
+  Serial.print((int) oiltx.Oil);
+  Serial.print(',  ');
+  Serial.println();
+  Serial.print("% Full ");
+  Serial.print((int) oiltx.HowFull);
+  Serial.print(',  ');
+  Serial.println();
+  Serial.print("Inches of Oil ");
+  Serial.print((int) oiltx.Level);
+  Serial.print(',  ');
+  Serial.println();
+  Serial.print("Battery Low? ");
+  Serial.print((int) oiltx.lobat);
+  Serial.println();
+  Serial.println();
+  Serial.print("mm ");
+  Serial.print(mm);
+  Serial.println();
+  serialFlush();
+#endif
 }
 
 void blink (byte pin) {
-    for (byte i = 0; i < 6; ++i) {
-        delay(100);
-        digitalWrite(pin, !digitalRead(pin));
-    }
+  for (byte i = 0; i < 6; ++i) {
+    delay(100);
+    digitalWrite(pin, !digitalRead(pin));
+  }
 }
 
 void setup () {
-    #if SERIAL || DEBUG
-        Serial.begin(57600);
-        Serial.print("\n[roomNode.3]");
-        myNodeID = rf12_config();
-        serialFlush();
-    #else
-        myNodeID = rf12_config(0); // don't report info on the serial port
-    #endif
-    
-    rf12_sleep(RF12_SLEEP); // power down
-    
-   
-    reportCount = REPORT_EVERY;     // report right away for easy debugging
-    scheduler.timer(MEASURE, 0);    // start the measurement loop going
-  
+#if SERIAL || DEBUG
+  Serial.begin(57600);
+  Serial.print("\n[roomNode.3]");
+  myNodeID = rf12_config();
+  serialFlush();
+#else
+  myNodeID = rf12_config(0); // don't report info on the serial port
+#endif
+
+  rf12_sleep(RF12_SLEEP); // power down
+
+
+  reportCount = REPORT_EVERY;     // report right away for easy debugging
+  scheduler.timer(MEASURE, 0);    // start the measurement loop going
+
 }
 
 
 
 void loop () {
 
-    #if DEBUG
-        Serial.print('.');
-        serialFlush();
-    #endif
+#if DEBUG
+  Serial.print('.');
+  serialFlush();
+#endif
 
-    
-    switch (scheduler.pollWaiting()) {
 
-        case MEASURE:
-            // reschedule these measurements periodically
-            scheduler.timer(MEASURE, MEASURE_PERIOD);
-            doMeasure();
+  switch (scheduler.pollWaiting()) {
 
-            // every so often, a report needs to be sent out
-            if (++reportCount >= REPORT_EVERY) {
-                reportCount = 0;
-                scheduler.timer(REPORT, 0);
-            }
-            break;
-            
-        case REPORT:
-            doReport();
-            break;
+  case MEASURE:
+    // reschedule these measurements periodically
+    scheduler.timer(MEASURE, MEASURE_PERIOD);
+    doMeasure();
+
+    // every so often, a report needs to be sent out
+    if (++reportCount >= REPORT_EVERY) {
+      reportCount = 0;
+      scheduler.timer(REPORT, 0);
     }
+    break;
+
+  case REPORT:
+    doReport();
+    break;
   }
+}
+
 
 
