@@ -46,8 +46,8 @@ PayloadTX oiltx;
 
 // ping sensor configuration
 #include <NewPing.h>
-#define TRIGGER_PIN  6  // Arduino pin tied to trigger pin on the ultrasonic sensor.
-#define ECHO_PIN     7  // Arduino pin tied to echo pin on the ultrasonic sensor.
+#define TRIGGER_PIN  7  // Arduino pin tied to trigger pin on the ultrasonic sensor.
+#define ECHO_PIN     4  // Arduino pin tied to echo pin on the ultrasonic sensor.
 #define MAX_DISTANCE 500 // Maximum distance we want to ping for (in centimeters). Maximum sensor distance is rated at 400-500cm.
 
 NewPing sonar(TRIGGER_PIN, ECHO_PIN, MAX_DISTANCE);
@@ -89,7 +89,7 @@ void ping(){
   //*******************TANK CONVERSION***************
   if (mm > tankHeight-radius){
     ; // Tank leavel is in the lower round section
-    theta = 2 * acos((radius-(radius - mm))/radius) ;
+    theta = 2 * acos((radius-(tankHeight - mm))/radius) ;
     LowerArea = radius * radius * (theta-sin(theta)) / 2;  
     Area = LowerArea;
   }
@@ -141,8 +141,8 @@ static void doMeasure() {
   byte firstTime = 0; // special case to init running avg
   ping(); //Get Measurement and calculate Area
   GallonsOil =  Area * conversion * tankDepth*10;  //convert cross-sectional area to liquid volume
-  percentFull = GallonsOil / Capacity * 10;
-  height = (tankHeight - mm) / 25.4;  //convert mm distance to inches of Oil in the tank
+  percentFull = GallonsOil / Capacity * 100;
+  height = (tankHeight - mm) / 25.4 *10;  //convert mm distance to inches of Oil in the tank
   Serial.println();
   Serial.println("Gallons");
   Serial.println(GallonsOil);
