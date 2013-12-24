@@ -10,10 +10,6 @@
 #define SERIAL  1   // set to 1 to also report readings on the serial port
 #define DEBUG   1   // set to 1 to display each loop() run and PIR trigger
 
-
-#define LDR_PORT    4   // defined if LDR is connected to a port's AIO pin
-
-
 #define MEASURE_PERIOD  30 // how often to measure, in tenths of seconds
 #define RETRY_PERIOD    10  // how soon to retry if ACK didn't come in
 #define RETRY_LIMIT     5   // maximum number of times to retry
@@ -127,14 +123,6 @@ void ping(){
 
 }
 
-// Conditional code, depending on which sensors are connected and how:
-
-
-#if LDR_PORT
-Port ldr (LDR_PORT);
-#endif
-
-
 // has to be defined because we're using the watchdog for low-power waiting
 ISR(WDT_vect) { 
   Sleepy::watchdogEvent(); 
@@ -175,8 +163,8 @@ static void doMeasure() {
 
   oiltx.Oil = smoothedAverage(oiltx.Oil, GallonsOil, firstTime);
   oiltx.HowFull = smoothedAverage(oiltx.HowFull, percentFull, firstTime);
- // oiltx.Level = smoothedAverage(oiltx.Level, height, firstTime);
- // oiltx.lobat = rf12_lowbat();
+  oiltx.Level = smoothedAverage(oiltx.Level, height, firstTime);
+  oiltx.lobat = rf12_lowbat();
 }
 
 static void serialFlush () {
@@ -198,20 +186,16 @@ static void doReport() {
   Serial.print((int) oiltx.Oil);
   Serial.print(',  ');
   Serial.println();
-//  Serial.print("% Full ");
-//  Serial.print((int) oiltx.HowFull);
-//  Serial.print(',  ');
-//  Serial.println();
-//  Serial.print("Inches of Oil ");
-//  Serial.print((int) oiltx.Level);
-//  Serial.print(',  ');
-//  Serial.println();
-//  Serial.print("Battery Low? ");
-//  Serial.print((int) oiltx.lobat);
-//  Serial.println();
-//  Serial.println();
-  Serial.print("mm ");
-  Serial.print(mm);
+  Serial.print("% Full ");
+  Serial.print((int) oiltx.HowFull);
+  Serial.print(',  ');
+  Serial.println();
+  Serial.print("Inches of Oil ");
+  Serial.print((int) oiltx.Level);
+  Serial.print(',  ');
+  Serial.println();
+  Serial.print("Battery Low? ");
+  Serial.print((int) oiltx.lobat);
   Serial.println();
   serialFlush();
 #endif
