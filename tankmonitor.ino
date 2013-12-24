@@ -7,8 +7,8 @@
 #include <avr/sleep.h>
 #include <util/atomic.h>
 
-#define SERIAL  1   // set to 1 to also report readings on the serial port
-#define DEBUG   1   // set to 1 to display each loop() run and PIR trigger
+#define SERIAL  0   // set to 1 to also report readings on the serial port
+#define DEBUG   0   // set to 1 to display each loop() run and PIR trigger
 
 #define MEASURE_PERIOD  30 // how often to measure, in tenths of seconds
 #define RETRY_PERIOD    10  // how soon to retry if ACK didn't come in
@@ -62,7 +62,6 @@ float Capacity = 267.9;  // Total tank Capacity in Gallons
 
 //Measurement Variables
 int GallonsOil;
-
 float theta;
 float const Pi = 3.142;
 float LowerArea;
@@ -83,22 +82,10 @@ long microsecondsToMillimeters(long microseconds)
   return microseconds / 2.9 / 2;
 }
 
-//Routines
-
-// called when ping() runs  
-void measureDistance(){
-
-  unsigned int duration = sonar.ping();
-
-  // convert the time into a distance
-  mm = microsecondsToMillimeters(duration);
-} 
-
 //called when timer expires to get measurement
 void ping(){
-
-  measureDistance();  // get the raw measurement data from HC-SR04 Sensor
-
+  unsigned int duration = sonar.ping();  // get the raw measurement data from HC-SR04 Sensor
+  mm = microsecondsToMillimeters(duration);  // convert the time into a distance
   //*******************TANK CONVERSION***************
   if (mm > tankHeight-radius){
     ; // Tank leavel is in the lower round section
