@@ -43,6 +43,7 @@ static byte myNodeID;       // node ID used for this unit
 typedef struct { 
   int Oil, HowFull, Level, lobat; 
 } 
+
 PayloadTX;
 PayloadTX oiltx;
 
@@ -58,26 +59,26 @@ NewPing sonar(TRIGGER_PIN, ECHO_PIN, MAX_DISTANCE);
 // Vertical Oil Tank Measurements in (mm)
 float tankHeight = 1117.6;
 float tankWidth = 685.8;
-float tankDepth = 1544;
+float tankDepth = 1524;
 float radius = 342.9;
-float Capacity = 275;  // Total tank Capacity in Gallons
+float Capacity = 267.9;  // Total tank Capacity in Gallons
 // End Tank Measurements
 
 //Measurement Variables
-float GallonsOil;
+int GallonsOil;
 
 float theta;
 float const Pi = 3.142;
 float LowerArea;
 float MiddleArea;
 float UpperArea;
-float percentFull;
+int percentFull;
 float height;
 float Area;
 long mm;
 
 //Conversions
-float conversion = 0.0000002641; //gallons per cc
+float conversion = 0.000000264172052; //gallons per cc
 long microsecondsToMillimeters(long microseconds)
 {
   // The speed of sound is 340 m/s or 29 microseconds per centimeter.
@@ -105,7 +106,7 @@ void ping(){
   //*******************TANK CONVERSION***************
   if (mm > tankHeight-radius){
     ; // Tank leavel is in the lower round section
-    theta = 2 * acos((radius-(tankHeight - mm))/radius) ;
+    theta = 2 * acos((radius-(radius - mm))/radius) ;
     LowerArea = radius * radius * (theta-sin(theta)) / 2;  
     Area = LowerArea;
   }
@@ -164,15 +165,18 @@ static byte waitForAck() {
 static void doMeasure() {
   byte firstTime = 0; // special case to init running avg
   ping(); //Get Measurement and calculate Area
-  GallonsOil = Area * conversion * tankDepth;  //convert cross-sectional area to liquid volume
-  percentFull = GallonsOil / Capacity;
+  GallonsOil =  Area * conversion * tankDepth*10;  //convert cross-sectional area to liquid volume
+  percentFull = GallonsOil / Capacity * 10;
   height = (tankHeight - mm) / 25.4;  //convert mm distance to inches of Oil in the tank
+  Serial.println();
+  Serial.println("Gallons");
+  Serial.println(GallonsOil);
 
 
   oiltx.Oil = smoothedAverage(oiltx.Oil, GallonsOil, firstTime);
   oiltx.HowFull = smoothedAverage(oiltx.HowFull, percentFull, firstTime);
-  oiltx.Level = smoothedAverage(oiltx.Level, height, firstTime);
-  oiltx.lobat = rf12_lowbat();
+ // oiltx.Level = smoothedAverage(oiltx.Level, height, firstTime);
+ // oiltx.lobat = rf12_lowbat();
 }
 
 static void serialFlush () {
@@ -194,18 +198,18 @@ static void doReport() {
   Serial.print((int) oiltx.Oil);
   Serial.print(',  ');
   Serial.println();
-  Serial.print("% Full ");
-  Serial.print((int) oiltx.HowFull);
-  Serial.print(',  ');
-  Serial.println();
-  Serial.print("Inches of Oil ");
-  Serial.print((int) oiltx.Level);
-  Serial.print(',  ');
-  Serial.println();
-  Serial.print("Battery Low? ");
-  Serial.print((int) oiltx.lobat);
-  Serial.println();
-  Serial.println();
+//  Serial.print("% Full ");
+//  Serial.print((int) oiltx.HowFull);
+//  Serial.print(',  ');
+//  Serial.println();
+//  Serial.print("Inches of Oil ");
+//  Serial.print((int) oiltx.Level);
+//  Serial.print(',  ');
+//  Serial.println();
+//  Serial.print("Battery Low? ");
+//  Serial.print((int) oiltx.lobat);
+//  Serial.println();
+//  Serial.println();
   Serial.print("mm ");
   Serial.print(mm);
   Serial.println();
